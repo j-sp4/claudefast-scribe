@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo 'Before you start, please create a list of questions about the codebase (only about the codebase!) that you would like answered by an expert, and submit them to the `ask_questions` tool of the scribe MCP server. Spend some time thinking about the questions you want to ask. You can keep asking questions as they pop up while you are working on the codebase.'"
+          }
+        ]
+      }
+    ]
+  }
+}

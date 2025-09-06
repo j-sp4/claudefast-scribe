@@ -5,6 +5,7 @@ import chalk from 'chalk';
 import { db } from '../../../server/lib/db';
 import { knowledgeEntries } from '../../../server/lib/db/schema';
 import { eq } from 'drizzle-orm';
+import { normalizeQuestion, formatQAEntriesAsMarkdown } from '../../../server/lib/utils/knowledge-parser';
 
 const model = 'claude-opus-4-1-20250805'; // 'claude-3-5-sonnet-20241022';
 
@@ -39,7 +40,7 @@ async function appendToKnowledgeBase(qaEntries: Array<{question: string, answer:
   const stats = { added: 0, skipped: 0, merged: 0 };
   
   for (const { question, answer } of qaEntries) {
-    const normalizedNewQuestion = question.toLowerCase().replace(/[^\w\s]/g, '').trim();
+    const normalizedNewQuestion = normalizeQuestion(question);
     
     // First check for exact match (normalized)
     if (existingQuestions.has(normalizedNewQuestion)) {
@@ -129,7 +130,7 @@ async function appendToKnowledgeBase(qaEntries: Array<{question: string, answer:
           const matchIndex = parseInt(responseText) - 1;
           if (!isNaN(matchIndex) && matchIndex >= 0 && matchIndex < existingQList.length) {
             const matchedQuestion = existingQList[matchIndex];
-            const normalizedMatched = matchedQuestion.toLowerCase().replace(/[^\w\s]/g, '').trim();
+            const normalizedMatched = normalizeQuestion(matchedQuestion);
             const existing = existingQuestions.get(normalizedMatched);
             
             if (existing) {
@@ -171,7 +172,7 @@ async function appendToKnowledgeBase(qaEntries: Array<{question: string, answer:
     
     // If not found as duplicate or similar, add as new
     if (!foundSimilar) {
-      const normalizedQuestion = question.toLowerCase().replace(/[^\w\s]/g, '').trim();
+      const normalizedQuestion = normalizeQuestion(question);
       await db.insert(knowledgeEntries).values({
         question,
         answer,
@@ -221,7 +222,7 @@ const handler = createMcpHandler(
       async ({ questions }) => {
         // Get all knowledge entries from database and format as markdown
         const entries = await db.select().from(knowledgeEntries);
-        const knowledgeContent = entries.map(e => `**Q: ${e.question}**\nA: ${e.answer}`).join('\n\n');
+        const knowledgeContent = formatQAEntriesAsMarkdown(entries);
 
         console.log(chalk.bgCyan.black.bold('\n\n\n ============================================================ '));
         console.log(chalk.bgCyan.black.bold(' 📋  MCP TOOL: ASK_QUESTIONS                                 '));

@@ -3,6 +3,7 @@ import { resolve } from 'path';
 import fs from 'fs/promises';
 import { db } from '../lib/db';
 import { knowledgeEntries } from '../lib/db/schema';
+import { parseQAEntries } from '../lib/utils/knowledge-parser';
 
 // Load environment variables
 config({ path: resolve(process.cwd(), '.env.local') });
@@ -15,27 +16,8 @@ async function migrateKnowledge() {
     const knowledgePath = resolve(process.cwd(), '..', 'KNOWLEDGE.md');
     const content = await fs.readFile(knowledgePath, 'utf-8');
     
-    // Parse Q&A entries using the exact regex from route.tsx
-    const questionRegex = /\*\*Q: ([^*]+)\*\*\nA: ([^]*?)(?=\n\n\*\*Q:|---|\n\n##|$)/gm;
-    const entries: Array<{
-      question: string;
-      answer: string;
-      normalizedQuestion: string;
-    }> = [];
-    
-    let match;
-    while ((match = questionRegex.exec(content)) !== null) {
-      const question = match[1].trim();
-      const answer = match[2].trim();
-      // Apply same normalization logic as route.tsx
-      const normalizedQuestion = question.toLowerCase().replace(/[^\w\s]/g, '').trim();
-      
-      entries.push({
-        question,
-        answer,
-        normalizedQuestion,
-      });
-    }
+    // Parse Q&A entries using shared utility
+    const entries = parseQAEntries(content);
     
     console.log(`📋 Found ${entries.length} Q&A entries to migrate`);
     

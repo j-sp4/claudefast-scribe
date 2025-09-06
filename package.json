@@ -1,0 +1,11 @@
+{
+  "name": "claudefast-scribe",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "cd server && npm run dev",
+    "build": "cd server && npm run build",
+    "start": "cd server && npm run start",
+    "install": "cd server && npm install"
+  }
+}

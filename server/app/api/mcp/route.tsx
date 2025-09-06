@@ -1,344 +1,746 @@
 import { z } from 'zod';
 import { createMcpHandler } from 'mcp-handler';
+import { db, schema, config } from '@/lib/db';
+import { ContextLoader } from '@/lib/context-loader';
+import { eq, desc, and, or, ilike } from 'drizzle-orm';
 import fs from 'fs/promises';
 import path from 'path';
-import Anthropic from '@anthropic-ai/sdk';
-import chalk from 'chalk';
 
-const model = 'claude-opus-4-1-20250805'; // 'claude-3-5-sonnet-20241022';
+// Initialize context loader
+const contextLoader = new ContextLoader();
 
-// Force chalk to always output colors, even when piped through tee
-chalk.level = 3; // 0 = disabled, 1 = basic, 2 = 256 colors, 3 = truecolor
-
-const KNOWLEDGE_FILE_PATH = path.join(process.cwd(), '..', 'KNOWLEDGE.md');
-
-// Note: chalk.level = 3 forces colors even when output is piped
-
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY || '',
-  defaultHeaders: {
-    'anthropic-version': '2023-06-01',
-  },
-});
-
-async function readKnowledgeBase(): Promise<string> {
-  try {
-    const content = await fs.readFile(KNOWLEDGE_FILE_PATH, 'utf-8');
-    return content;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-      const initialContent = `# Knowledge Base
-
-This file contains question and answer pairs about the codebase, accumulated over time to help with future development.
-
-## Q&A Entries
-
----
-`;
-      await fs.writeFile(KNOWLEDGE_FILE_PATH, initialContent, 'utf-8');
-      return initialContent;
-    }
-    throw error;
-  }
-}
-
-async function appendToKnowledgeBase(qaEntries: Array<{question: string, answer: string}>): Promise<{added: number, skipped: number, merged: number}> {
-  let currentContent = await readKnowledgeBase();
-  
-  // Extract all existing questions from the knowledge base for faster comparison
-  const existingQuestions = new Map<string, { original: string, answer: string, position: number }>();
-  const questionRegex = /\*\*Q: ([^*]+)\*\*\nA: ([^]*?)(?=\n\n\*\*Q:|---|\n\n##|$)/gm;
-  let match;
-  while ((match = questionRegex.exec(currentContent)) !== null) {
-    const q = match[1].trim();
-    const a = match[2].trim();
-    const normalized = q.toLowerCase().replace(/[^\w\s]/g, '').trim();
-    existingQuestions.set(normalized, { original: q, answer: a, position: match.index });
-  }
-  
-  // Process each Q&A entry to check for duplicates or similar questions
-  const processedEntries: string[] = [];
-  const stats = { added: 0, skipped: 0, merged: 0 };
-  
-  for (const { question, answer } of qaEntries) {
-    const normalizedNewQuestion = question.toLowerCase().replace(/[^\w\s]/g, '').trim();
-    
-    // First check for exact match (normalized)
-    if (existingQuestions.has(normalizedNewQuestion)) {
-      const existing = existingQuestions.get(normalizedNewQuestion)!;
-      
-      // Check if the answer is already included
-      if (existing.answer.toLowerCase().includes(answer.toLowerCase().trim())) {
-        console.log(chalk.bgYellow.black(' ⏭️  SKIP '), chalk.yellow('Duplicate Q&A:'), chalk.yellowBright(question));
-        stats.skipped++;
-        continue;
-      }
-      
-      // If we have API key, use AI to intelligently merge answers
-      if (process.env.ANTHROPIC_API_KEY) {
-        try {
-          const response = await anthropic.messages.create({
-            model,
-            max_tokens: 1000,
-            temperature: 0.1,
-            system: 'You are an expert at merging knowledge base answers. When given an existing Q&A pair and a new answer, intelligently combine them into a single comprehensive answer. Keep the merged answer concise and well-structured.',
-            messages: [
-              {
-                role: 'user',
-                content: `Existing Question: ${existing.original}\nExisting Answer: ${existing.answer}\n\nNew Answer to merge: ${answer}\n\nPlease provide a merged answer that combines both pieces of information. Return ONLY the merged answer text, no explanation.`
-              }
-            ],
-          });
-          
-          const mergedAnswer = response.content[0]?.type === 'text' ? response.content[0].text.trim() : existing.answer + '\n\n' + answer;
-          
-          // Update the answer in the content
-          const oldQA = `**Q: ${existing.original}**\nA: ${existing.answer}`;
-          const newQA = `**Q: ${existing.original}**\nA: ${mergedAnswer}`;
-          currentContent = currentContent.replace(oldQA, newQA);
-          
-          // Update our map for future comparisons in this batch
-          existingQuestions.set(normalizedNewQuestion, { ...existing, answer: mergedAnswer });
-          
-          console.log(chalk.bgBlue.white(' 🔀 MERGE '), chalk.blue('Merged answer for:'), chalk.blueBright(existing.original));
-          stats.merged++;
-        } catch (error) {
-          console.error(chalk.red('Error merging with AI:'), error);
-          // Fall back to simple append
-          const mergedAnswer = existing.answer + '\n\nAdditional information:\n' + answer;
-          const oldQA = `**Q: ${existing.original}**\nA: ${existing.answer}`;
-          const newQA = `**Q: ${existing.original}**\nA: ${mergedAnswer}`;
-          currentContent = currentContent.replace(oldQA, newQA);
-          existingQuestions.set(normalizedNewQuestion, { ...existing, answer: mergedAnswer });
-          stats.merged++;
-        }
-      } else {
-        // No API key, do simple append
-        const mergedAnswer = existing.answer + '\n\nAdditional information:\n' + answer;
-        const oldQA = `**Q: ${existing.original}**\nA: ${existing.answer}`;
-        const newQA = `**Q: ${existing.original}**\nA: ${mergedAnswer}`;
-        currentContent = currentContent.replace(oldQA, newQA);
-        existingQuestions.set(normalizedNewQuestion, { ...existing, answer: mergedAnswer });
-        console.log(chalk.bgBlue.white(' 🔀 MERGE '), chalk.blue('Appended answer for:'), chalk.blueBright(existing.original));
-        stats.merged++;
-      }
-      continue;
-    }
-    
-    // Check for similar questions using AI if available
-    let foundSimilar = false;
-    if (process.env.ANTHROPIC_API_KEY && existingQuestions.size > 0) {
-      try {
-        // Get a sample of existing questions for comparison
-        const existingQList = Array.from(existingQuestions.values()).map(e => e.original);
-        
-        const response = await anthropic.messages.create({
-          model,
-          max_tokens: 500,
-          temperature: 0.1,
-          system: 'You are an expert at finding semantically similar questions. Given a new question and a list of existing questions, identify if any are asking essentially the same thing even if phrased differently.',
-          messages: [
-            {
-              role: 'user',
-              content: `New Question: ${question}\n\nExisting Questions:\n${existingQList.map((q, i) => `${i+1}. ${q}`).join('\n')}\n\nIs the new question semantically identical to any existing question? If yes, respond with ONLY the number of the matching question (e.g., "3"). If no match, respond with "NONE".`
-            }
-          ],
-        });
-        
-        const responseText = response.content[0]?.type === 'text' ? response.content[0].text.trim() : 'NONE';
-        
-        if (responseText !== 'NONE' && !responseText.includes('NONE')) {
-          const matchIndex = parseInt(responseText) - 1;
-          if (!isNaN(matchIndex) && matchIndex >= 0 && matchIndex < existingQList.length) {
-            const matchedQuestion = existingQList[matchIndex];
-            const normalizedMatched = matchedQuestion.toLowerCase().replace(/[^\w\s]/g, '').trim();
-            const existing = existingQuestions.get(normalizedMatched);
-            
-            if (existing) {
-              console.log(chalk.bgMagenta.white(' 🔍 SIMILAR '), chalk.magenta('Found similar question:'), chalk.magentaBright(matchedQuestion));
-              
-              // Merge the answers
-              const mergeResponse = await anthropic.messages.create({
-                model,
-                max_tokens: 1000,
-                temperature: 0.1,
-                system: 'You are an expert at merging knowledge base answers. When given an existing Q&A pair and a new answer, intelligently combine them into a single comprehensive answer. Keep the merged answer concise and well-structured.',
-                messages: [
-                  {
-                    role: 'user',
-                    content: `Existing Question: ${existing.original}\nExisting Answer: ${existing.answer}\n\nNew Question (similar): ${question}\nNew Answer to merge: ${answer}\n\nPlease provide a merged answer that combines both pieces of information. Return ONLY the merged answer text, no explanation.`
-                  }
-                ],
-              });
-              
-              const mergedAnswer = mergeResponse.content[0]?.type === 'text' ? mergeResponse.content[0].text.trim() : existing.answer + '\n\n' + answer;
-              
-              // Update the answer in the content
-              const oldQA = `**Q: ${existing.original}**\nA: ${existing.answer}`;
-              const newQA = `**Q: ${existing.original}**\nA: ${mergedAnswer}`;
-              currentContent = currentContent.replace(oldQA, newQA);
-              
-              // Update our map
-              existingQuestions.set(normalizedMatched, { ...existing, answer: mergedAnswer });
-              
-              stats.merged++;
-              foundSimilar = true;
-            }
-          }
-        }
-      } catch (error) {
-        console.error(chalk.red('Error checking for similar questions:'), error);
-      }
-    }
-    
-    // If not found as duplicate or similar, add as new
-    if (!foundSimilar) {
-      processedEntries.push(`\n**Q: ${question}**\nA: ${answer}\n`);
-      stats.added++;
-      console.log(chalk.bgGreen.black(' ✅ ADD '), chalk.green('New question:'), chalk.greenBright(question));
-    }
-  }
-  
-  // Only update if there are new entries to add
-  if (processedEntries.length > 0) {
-    const newEntriesText = processedEntries.join('\n');
-    // Find the last --- marker and insert before it
-    const lastDashIndex = currentContent.lastIndexOf('\n---\n');
-    if (lastDashIndex !== -1) {
-      currentContent = currentContent.slice(0, lastDashIndex) + newEntriesText + '\n' + currentContent.slice(lastDashIndex);
-    } else {
-      // If no --- marker found, append at the end
-      currentContent += newEntriesText;
-    }
-  }
-  
-  // Write the updated content
-  await fs.writeFile(KNOWLEDGE_FILE_PATH, currentContent, 'utf-8');
-  
-  return stats;
-}
-
-async function searchKnowledgeBaseWithAI(knowledgeContent: string, question: string): Promise<string | null> {
-  if (!process.env.ANTHROPIC_API_KEY) {
-    return null;
-  }
-
-  const response = await anthropic.messages.create({
-    model,
-    max_tokens: 1000,
-    temperature: 0.1,
-    system: 'You are an expert at searching through a knowledge base. Your job is to find relevant Q&A pairs that answer the given question. If you find relevant information, quote it exactly. If the answer is not in the knowledge base, say "NOT_FOUND".',
-    messages: [
-      {
-        role: 'user',
-        content: `Knowledge Base Content:\n${knowledgeContent}\n\nQuestion to answer: ${question}\n\nPlease search the knowledge base and quote any relevant Q&A pairs that help answer this question. If no relevant information exists, respond with "NOT_FOUND".`
-      }
-    ],
-  });
-
-  const answer = response.content[0]?.type === 'text' ? response.content[0].text : null;
-  if (!answer || answer.trim().startsWith('NOT_FOUND')) {
-    return null;
-  }
-  return answer;
+// Token counting (simple approximation)
+function countTokens(text: string): number {
+  // Rough approximation: ~4 characters per token
+  return Math.ceil(text.length / 4);
 }
 
 const handler = createMcpHandler(
   (server) => {
+    // Discovery Tools
     server.tool(
-      'ask_questions',
-      'Asks questions about the codebase or on how to solve a particular problem. They will be answered by an expert. You should make use of this tool as much as possible, as the expert is a senior developer with 10+ years of experience in this codebase. Whenever you are trying to solve a problem, or facing an issue that might need solving, ask this tool.',
+      'list_projects',
+      'List all available projects with their token counts',
       {
-        questions: z.array(z.string()).describe("Array of questions you want to ask about the codebase or problems you're trying to solve"),
+        query: z.string().optional().describe('Optional search query')
       },
-      async ({ questions }) => {
-        const knowledgeContent = await readKnowledgeBase();
+      async ({ query }) => {
+        if (!db) {
+          return {
+            content: [{
+              type: 'text',
+              text: 'Database not configured. Please set up Supabase first.'
+            }]
+          };
+        }
 
-        console.log(chalk.bgCyan.black.bold('\n\n\n ============================================================ '));
-        console.log(chalk.bgCyan.black.bold(' 📋  MCP TOOL: ASK_QUESTIONS                                 '));
-        console.log(chalk.bgCyan.black.bold(' ============================================================ '));
-        console.log(chalk.magentaBright.bold('\n🔍 Questions Received:'));
-        questions.forEach((q, i) => {
-          console.log(
-            chalk.bgMagenta.white.bold(` ${i + 1} `),
-            chalk.yellowBright('▶'),
-            chalk.cyanBright.bold(q)
-          );
+        let projects;
+        if (query) {
+          projects = await db.query.projects.findMany({
+            where: or(
+              ilike(schema.projects.name, `%${query}%`),
+              ilike(schema.projects.slug, `%${query}%`)
+            )
+          });
+        } else {
+          projects = await db.query.projects.findMany();
+        }
+
+        const projectsWithInfo = projects.map(p => ({
+          slug: p.slug,
+          name: p.name,
+          description: p.description,
+          totalTokens: p.totalTokens,
+          fitsInContext: p.totalTokens <= config.context.maxTokens
+        }));
+
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({ projects: projectsWithInfo }, null, 2)
+          }]
+        };
+      }
+    );
+
+    server.tool(
+      'list_topics',
+      'List topics within a project',
+      {
+        projectSlug: z.string().describe('The project slug'),
+        query: z.string().optional().describe('Optional search query')
+      },
+      async ({ projectSlug, query }) => {
+        if (!db) {
+          return {
+            content: [{
+              type: 'text',
+              text: 'Database not configured. Please set up Supabase first.'
+            }]
+          };
+        }
+
+        const project = await db.query.projects.findFirst({
+          where: eq(schema.projects.slug, projectSlug),
+          with: {
+            topics: true
+          }
         });
-        console.log(chalk.gray.italic('\n⏳ Processing questions through AI knowledge base...'));
-        
-        const responses = await Promise.all(
-          questions.map(async (question) => {
-            const answer = await searchKnowledgeBaseWithAI(knowledgeContent, question);
-            
-            if (answer) {
-              return {
-                question,
-                answer: answer
-              };
-            } else {
-              return {
-                question,
-                answer: "I don't have a direct answer to that question in the knowledge base. You'll need to figure it out yourself. IMPORTANT: Once you've found the answer, you must add it back to the knowledge base using the create_qa tool so that future sessions can benefit from this knowledge."
-              };
-            }
-          })
-        );
-        
-        const formattedResponse = responses.map(r => `**Question:** ${r.question}\n\n**Answer:** ${r.answer}`).join('\n\n---\n\n');
+
+        if (!project) {
+          return {
+            content: [{
+              type: 'text',
+              text: `Project '${projectSlug}' not found`
+            }]
+          };
+        }
+
+        let topics = project.topics;
+        if (query) {
+          const queryLower = query.toLowerCase();
+          topics = topics.filter(t => 
+            t.title.toLowerCase().includes(queryLower) ||
+            t.slug.toLowerCase().includes(queryLower)
+          );
+        }
+
+        const topicsWithInfo = topics.map(t => ({
+          slug: t.slug,
+          title: t.title,
+          path: t.path,
+          tags: t.tags,
+          totalTokens: t.totalTokens
+        }));
+
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({ 
+              project: project.name,
+              topics: topicsWithInfo 
+            }, null, 2)
+          }]
+        };
+      }
+    );
+
+    // Context-Aware Reading Tools
+    server.tool(
+      'load_project_context',
+      'Load entire project documentation into context if size permits',
+      {
+        projectSlug: z.string().describe('The project slug'),
+        userContext: z.string().optional().describe('Current user context for smart loading')
+      },
+      async ({ projectSlug, userContext }) => {
+        const result = await contextLoader.loadProject(projectSlug, userContext);
         
         return {
-          content: [{ type: 'text', text: formattedResponse }],
+          content: [{
+            type: 'text',
+            text: JSON.stringify(result, null, 2)
+          }]
         };
-      },
+      }
     );
-    
-    server.tool(
-      'create_qa',
-      `Create new question and answer pairs in the knowledge base. Use this tool after you've learned something new about the codebase. Please specify a question and an answer, and it will be added to the knowledgebase, and can later be retrieved in later sessions. Write the Q&A in such a way that it would be the MOST useful for future readers & developers, including coding agents but also humans who may read the file. This means you may have to explain the context of the question, when it would be useful, etc. Every question is completely independent of the others, and you cannot assume that the user will receive the questions in the same order they're given, so add all necessary context to each specific question.`,
-      {
-        qa_entries: z.array(z.object({
-          question: z.string().describe("The question that you're answering"),
-          answer: z.string().describe("The answer to the question"),
-        })).describe("The question and answer pairs that you've learned about the codebase"),
-      },
-      async ({ qa_entries }) => {
-        const stats = await appendToKnowledgeBase(qa_entries);
 
-        console.log(chalk.bgGreen.black.bold('\n\n\n ============================================================ '));
-        console.log(chalk.bgGreen.black.bold(' ✅  MCP TOOL: CREATE_QA                                     '));
-        console.log(chalk.bgGreen.black.bold(' ============================================================ '));
+    server.tool(
+      'search_in_context',
+      'Search within loaded project context',
+      {
+        projectSlug: z.string().describe('The project slug'),
+        query: z.string().describe('Search query'),
+        limit: z.number().default(5).describe('Maximum results to return')
+      },
+      async ({ projectSlug, query, limit }) => {
+        // First load the project context
+        const loadResult = await contextLoader.loadProject(projectSlug);
         
-        console.log(chalk.yellowBright.bold('\n📊 Processing Statistics:'));
-        console.log(
-          chalk.bgGreen.white.bold(' ADDED '), chalk.greenBright.bold(stats.added),
-          stats.merged > 0 ? chalk.bgYellow.black.bold(' MERGED ') + ' ' + chalk.yellowBright.bold(stats.merged) : '',
-          stats.skipped > 0 ? chalk.bgGray.white(' SKIPPED ') + ' ' + chalk.gray(stats.skipped) : ''
+        if (loadResult.strategy === 'not_found') {
+          return {
+            content: [{
+              type: 'text',
+              text: loadResult.message || 'Project not found'
+            }]
+          };
+        }
+
+        // Search within loaded documents
+        const searchResults = await contextLoader.searchInContext(
+          loadResult.documents,
+          query,
+          limit
         );
+
+        const formattedResults = searchResults.map(r => ({
+          topic: r.document.topicSlug,
+          title: r.document.title,
+          score: r.score,
+          matches: r.matches
+        }));
+
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              project: projectSlug,
+              query,
+              contextStrategy: loadResult.strategy,
+              results: formattedResults
+            }, null, 2)
+          }]
+        };
+      }
+    );
+
+    server.tool(
+      'read_doc',
+      'Read a specific document',
+      {
+        projectSlug: z.string().describe('The project slug'),
+        topicSlug: z.string().describe('The topic slug'),
+        version: z.number().optional().describe('Specific version (latest if not specified)')
+      },
+      async ({ projectSlug, topicSlug, version }) => {
+        if (!db) {
+          return {
+            content: [{
+              type: 'text',
+              text: 'Database not configured. Please set up Supabase first.'
+            }]
+          };
+        }
+
+        const topic = await db.query.topics.findFirst({
+          where: and(
+            eq(schema.topics.slug, topicSlug)
+          ),
+          with: {
+            project: true,
+            documents: {
+              where: version ? eq(schema.documents.version, version) : undefined,
+              orderBy: [desc(schema.documents.version)],
+              limit: 1
+            }
+          }
+        });
+
+        if (!topic || topic.project.slug !== projectSlug) {
+          return {
+            content: [{
+              type: 'text',
+              text: `Topic '${topicSlug}' not found in project '${projectSlug}'`
+            }]
+          };
+        }
+
+        const document = topic.documents[0];
+        if (!document) {
+          return {
+            content: [{
+              type: 'text',
+              text: `No document found for topic '${topicSlug}'`
+            }]
+          };
+        }
+
+        // Update access count
+        await db.update(schema.documents)
+          .set({ 
+            accessCount: document.accessCount + 1,
+            lastAccessedAt: new Date()
+          })
+          .where(eq(schema.documents.id, document.id));
+
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              project: projectSlug,
+              topic: topicSlug,
+              version: document.version,
+              title: document.title,
+              content: document.contentMd,
+              tokens: document.tokenCount,
+              lastUpdated: document.updatedAt
+            }, null, 2)
+          }]
+        };
+      }
+    );
+
+    // Contribution Tools
+    server.tool(
+      'propose_update',
+      'Propose an update to documentation',
+      {
+        projectSlug: z.string().describe('The project slug'),
+        topicSlug: z.string().optional().describe('Topic slug for existing topic'),
+        newTopic: z.object({
+          slug: z.string(),
+          title: z.string(),
+          path: z.string().optional(),
+          tags: z.array(z.string()).optional()
+        }).optional().describe('Create a new topic'),
+        change: z.object({
+          kind: z.enum(['replace', 'append', 'edit']),
+          title: z.string(),
+          contentMd: z.string(),
+          baseDocVersion: z.number().optional()
+        }),
+        rationale: z.string().optional()
+      },
+      async ({ projectSlug, topicSlug, newTopic, change, rationale }) => {
+        if (!db) {
+          return {
+            content: [{
+              type: 'text',
+              text: 'Database not configured. Please set up Supabase first.'
+            }]
+          };
+        }
+
+        // Get project
+        const project = await db.query.projects.findFirst({
+          where: eq(schema.projects.slug, projectSlug)
+        });
+
+        if (!project) {
+          return {
+            content: [{
+              type: 'text',
+              text: `Project '${projectSlug}' not found`
+            }]
+          };
+        }
+
+        let topic;
+        let targetDocument;
+
+        // Handle existing topic vs new topic
+        if (topicSlug) {
+          topic = await db.query.topics.findFirst({
+            where: and(
+              eq(schema.topics.projectId, project.id),
+              eq(schema.topics.slug, topicSlug)
+            ),
+            with: {
+              documents: {
+                orderBy: [desc(schema.documents.version)],
+                limit: 1
+              }
+            }
+          });
+
+          if (!topic) {
+            return {
+              content: [{
+                type: 'text',
+                text: `Topic '${topicSlug}' not found`
+              }]
+            };
+          }
+
+          targetDocument = topic.documents[0];
+
+          // Check version conflict
+          if (change.baseDocVersion && targetDocument && 
+              targetDocument.version !== change.baseDocVersion) {
+            return {
+              content: [{
+                type: 'text',
+                text: `Version conflict: document has been updated. Current version: ${targetDocument.version}, your version: ${change.baseDocVersion}`
+              }]
+            };
+          }
+        }
+
+        // Create proposal
+        const tokenCount = countTokens(change.contentMd);
         
-        if (qa_entries.length > 0) {
-          console.log(chalk.magentaBright.bold('\n📝 Knowledge Base Entries:'));
-          qa_entries.forEach((entry, i) => {
-            console.log(chalk.bgBlue.white.bold(`\n  Entry ${i + 1} `));
-            console.log(chalk.yellowBright('  ❓ Question:'), chalk.cyanBright.bold(entry.question));
-            console.log(chalk.greenBright('  ✅ Answer:'));
-            const answerLines = entry.answer.split('\n');
-            answerLines.forEach(line => {
-              console.log(chalk.whiteBright('     ' + line));
-            });
+        const [proposal] = await db.insert(schema.proposals).values({
+          projectId: project.id,
+          topicId: topic?.id,
+          targetDocumentId: targetDocument?.id,
+          changeKind: change.kind as any,
+          title: change.title,
+          contentMd: change.contentMd,
+          rationale,
+          baseDocVersion: change.baseDocVersion,
+          status: 'pending'
+        }).returning();
+
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              proposalId: proposal.id,
+              status: 'pending',
+              message: 'Proposal submitted successfully',
+              tokenCount
+            }, null, 2)
+          }]
+        };
+      }
+    );
+
+    server.tool(
+      'review_queue',
+      'View pending proposals for review',
+      {
+        projectSlug: z.string().optional().describe('Filter by project'),
+        limit: z.number().default(10).describe('Maximum proposals to return')
+      },
+      async ({ projectSlug, limit }) => {
+        if (!db) {
+          return {
+            content: [{
+              type: 'text',
+              text: 'Database not configured. Please set up Supabase first.'
+            }]
+          };
+        }
+
+        let proposals;
+        if (projectSlug) {
+          const project = await db.query.projects.findFirst({
+            where: eq(schema.projects.slug, projectSlug)
+          });
+          
+          if (!project) {
+            return {
+              content: [{
+                type: 'text',
+                text: `Project '${projectSlug}' not found`
+              }]
+            };
+          }
+
+          proposals = await db.query.proposals.findMany({
+            where: and(
+              eq(schema.proposals.projectId, project.id),
+              eq(schema.proposals.status, 'pending')
+            ),
+            with: {
+              project: true,
+              topic: true,
+              targetDocument: true
+            },
+            limit,
+            orderBy: [desc(schema.proposals.createdAt)]
+          });
+        } else {
+          proposals = await db.query.proposals.findMany({
+            where: eq(schema.proposals.status, 'pending'),
+            with: {
+              project: true,
+              topic: true,
+              targetDocument: true
+            },
+            limit,
+            orderBy: [desc(schema.proposals.createdAt)]
           });
         }
-        console.log(chalk.gray('\n' + '─'.repeat(60)));
-        
-        let message = `Processed ${qa_entries.length} Q&A pair(s):\n`;
-        if (stats.added > 0) message += `- Added ${stats.added} new question(s)\n`;
-        if (stats.merged > 0) message += `- Merged ${stats.merged} answer(s) with similar questions\n`;
-        if (stats.skipped > 0) message += `- Skipped ${stats.skipped} duplicate question(s)\n`;
-        
+
+        const formattedProposals = proposals.map(p => ({
+          id: p.id,
+          project: p.project.slug,
+          topic: p.topic?.slug,
+          changeKind: p.changeKind,
+          title: p.title,
+          rationale: p.rationale,
+          createdAt: p.createdAt,
+          contentPreview: p.contentMd.substring(0, 200) + '...'
+        }));
+
         return {
-          content: [{ type: 'text', text: message.trim() }],
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              count: formattedProposals.length,
+              proposals: formattedProposals
+            }, null, 2)
+          }]
         };
+      }
+    );
+
+    server.tool(
+      'approve_proposal',
+      'Approve a proposal and apply changes',
+      {
+        proposalId: z.string().describe('The proposal ID'),
+        reviewNote: z.string().optional().describe('Optional review note')
       },
+      async ({ proposalId, reviewNote }) => {
+        if (!db) {
+          return {
+            content: [{
+              type: 'text',
+              text: 'Database not configured. Please set up Supabase first.'
+            }]
+          };
+        }
+
+        const proposal = await db.query.proposals.findFirst({
+          where: eq(schema.proposals.id, proposalId),
+          with: {
+            topic: true,
+            targetDocument: true
+          }
+        });
+
+        if (!proposal) {
+          return {
+            content: [{
+              type: 'text',
+              text: `Proposal '${proposalId}' not found`
+            }]
+          };
+        }
+
+        if (proposal.status !== 'pending') {
+          return {
+            content: [{
+              type: 'text',
+              text: `Proposal already ${proposal.status}`
+            }]
+          };
+        }
+
+        // Begin transaction-like operations
+        let newVersion = 1;
+        let topicId = proposal.topicId;
+
+        // If updating existing document
+        if (proposal.targetDocument) {
+          newVersion = proposal.targetDocument.version + 1;
+          
+          // Create revision
+          await db.insert(schema.revisions).values({
+            documentId: proposal.targetDocument.id,
+            version: proposal.targetDocument.version,
+            contentMd: proposal.targetDocument.contentMd,
+            tokenCount: proposal.targetDocument.tokenCount,
+            changeDescription: proposal.rationale
+          });
+
+          // Update document
+          let newContent = proposal.contentMd;
+          if (proposal.changeKind === 'append') {
+            newContent = proposal.targetDocument.contentMd + '\n\n' + proposal.contentMd;
+          }
+
+          const tokenCount = countTokens(newContent);
+          
+          await db.update(schema.documents)
+            .set({
+              version: newVersion,
+              title: proposal.title,
+              contentMd: newContent,
+              tokenCount,
+              updatedAt: new Date()
+            })
+            .where(eq(schema.documents.id, proposal.targetDocument.id));
+
+          // Update topic token count
+          await db.update(schema.topics)
+            .set({
+              totalTokens: tokenCount,
+              updatedAt: new Date()
+            })
+            .where(eq(schema.topics.id, proposal.topicId!));
+        } else {
+          // Create new topic if needed
+          if (!topicId) {
+            const [newTopic] = await db.insert(schema.topics).values({
+              projectId: proposal.projectId,
+              slug: `new-topic-${Date.now()}`,
+              title: proposal.title,
+              totalTokens: countTokens(proposal.contentMd)
+            }).returning();
+            topicId = newTopic.id;
+          }
+
+          // Create new document
+          const tokenCount = countTokens(proposal.contentMd);
+          
+          await db.insert(schema.documents).values({
+            topicId: topicId!,
+            version: 1,
+            title: proposal.title,
+            contentMd: proposal.contentMd,
+            tokenCount
+          });
+        }
+
+        // Update proposal status
+        await db.update(schema.proposals)
+          .set({
+            status: 'approved',
+            reviewNote,
+            reviewedAt: new Date()
+          })
+          .where(eq(schema.proposals.id, proposalId));
+
+        // Update project total tokens
+        const projectDocs = await db.query.documents.findMany({
+          where: eq(schema.topics.projectId, proposal.projectId),
+          columns: {
+            tokenCount: true
+          }
+        });
+
+        const totalTokens = projectDocs.reduce((sum, doc) => sum + doc.tokenCount, 0);
+        
+        await db.update(schema.projects)
+          .set({
+            totalTokens,
+            updatedAt: new Date()
+          })
+          .where(eq(schema.projects.id, proposal.projectId));
+
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              status: 'approved',
+              newVersion,
+              message: 'Proposal approved and changes applied'
+            }, null, 2)
+          }]
+        };
+      }
+    );
+
+    server.tool(
+      'reject_proposal',
+      'Reject a proposal',
+      {
+        proposalId: z.string().describe('The proposal ID'),
+        reviewNote: z.string().describe('Reason for rejection')
+      },
+      async ({ proposalId, reviewNote }) => {
+        if (!db) {
+          return {
+            content: [{
+              type: 'text',
+              text: 'Database not configured. Please set up Supabase first.'
+            }]
+          };
+        }
+
+        const proposal = await db.query.proposals.findFirst({
+          where: eq(schema.proposals.id, proposalId)
+        });
+
+        if (!proposal) {
+          return {
+            content: [{
+              type: 'text',
+              text: `Proposal '${proposalId}' not found`
+            }]
+          };
+        }
+
+        if (proposal.status !== 'pending') {
+          return {
+            content: [{
+              type: 'text',
+              text: `Proposal already ${proposal.status}`
+            }]
+          };
+        }
+
+        await db.update(schema.proposals)
+          .set({
+            status: 'rejected',
+            reviewNote,
+            reviewedAt: new Date()
+          })
+          .where(eq(schema.proposals.id, proposalId));
+
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              status: 'rejected',
+              message: 'Proposal rejected'
+            }, null, 2)
+          }]
+        };
+      }
+    );
+
+    // Utility Tools
+    server.tool(
+      'history',
+      'View revision history for a document',
+      {
+        projectSlug: z.string().describe('The project slug'),
+        topicSlug: z.string().describe('The topic slug'),
+        limit: z.number().default(10).describe('Maximum revisions to return')
+      },
+      async ({ projectSlug, topicSlug, limit }) => {
+        if (!db) {
+          return {
+            content: [{
+              type: 'text',
+              text: 'Database not configured. Please set up Supabase first.'
+            }]
+          };
+        }
+
+        const topic = await db.query.topics.findFirst({
+          where: eq(schema.topics.slug, topicSlug),
+          with: {
+            project: true,
+            documents: {
+              with: {
+                revisions: {
+                  orderBy: [desc(schema.revisions.version)],
+                  limit
+                }
+              }
+            }
+          }
+        });
+
+        if (!topic || topic.project.slug !== projectSlug) {
+          return {
+            content: [{
+              type: 'text',
+              text: `Topic '${topicSlug}' not found in project '${projectSlug}'`
+            }]
+          };
+        }
+
+        const history = [];
+        for (const doc of topic.documents) {
+          for (const rev of doc.revisions) {
+            history.push({
+              version: rev.version,
+              changeDescription: rev.changeDescription,
+              createdAt: rev.createdAt,
+              tokenCount: rev.tokenCount
+            });
+          }
+        }
+
+        history.sort((a, b) => b.version - a.version);
+
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              project: projectSlug,
+              topic: topicSlug,
+              history: history.slice(0, limit)
+            }, null, 2)
+          }]
+        };
+      }
     );
   },
   {},
@@ -348,7 +750,3 @@ const handler = createMcpHandler(
 );
 
 export { handler as GET, handler as POST, handler as DELETE };
-
-// demo change 1755998949760
-// demo change 1755999037552
-// demo change 1755999115071

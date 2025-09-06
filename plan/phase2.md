@@ -1,142 +1,177 @@
-# Phase 2: Search & Retrieval Infrastructure
+# Phase 2: Smart Context Management & Search
 
 **Duration**: Week 2 (Days 8-14)  
-**Goal**: Build robust hybrid search combining keyword and semantic search with intelligent ranking
+**Goal**: Build intelligent context loading and in-context search capabilities
 
 ## Overview
 
-The current prototype only has AI-based Q&A search through the Claude API. Phase 2 will implement proper search infrastructure with PostgreSQL full-text search, pgvector for embeddings, and a hybrid ranking algorithm.
+With our context-first architecture, Phase 2 focuses on smart document loading strategies and efficient in-context search, eliminating the need for traditional RAG infrastructure.
 
 ## Key Deliverables
 
-### 1. Full-Text Search Implementation
-- [ ] PostgreSQL tsvector setup for all documents
-- [ ] BM25-style ranking implementation
-- [ ] Search indexes on document content
-- [ ] Support for phrase queries and boolean operators
-- [ ] Highlighting of matched terms in results
+### 1. Smart Context Loading System
+- [ ] Project size analyzer
+- [ ] Context budget manager (track token usage)
+- [ ] Intelligent section selection for large projects
+- [ ] Related document prefetching
+- [ ] Context caching strategy
 
-### 2. Semantic Search with Embeddings
-- [ ] pgvector extension setup
-- [ ] Document chunking strategy (400-800 tokens)
-- [ ] Embedding generation pipeline
-- [ ] Vector similarity search implementation
-- [ ] Embedding cache to reduce API costs
+### 2. In-Context Search (No Embeddings)
+- [ ] Efficient string search within loaded context
+- [ ] Section-aware search (search within headings)
+- [ ] Cross-reference detection
+- [ ] Result highlighting without database queries
+- [ ] Smart result ranking based on structure
 
-### 3. Document Processing Pipeline
-- [ ] Markdown parser for structured content extraction
-- [ ] Intelligent chunking by headings and size
+### 3. Document Organization Pipeline
+- [ ] Markdown parser for structure extraction
+- [ ] Document relationship mapping
 - [ ] Anchor ID generation for deep linking
 - [ ] Metadata extraction (tags, categories)
-- [ ] Background job for re-indexing
+- [ ] Token counting for all documents
 
-### 4. Hybrid Search & Ranking
-- [ ] Combine keyword and semantic scores
-- [ ] Context-aware ranking factors
-- [ ] Relevance scoring algorithm
-- [ ] Result deduplication
-- [ ] Performance optimization
+### 4. Context-First Search Strategy
+- [ ] Load-time optimization
+- [ ] Priority-based document loading
+- [ ] Frequently accessed document caching
+- [ ] Cross-project relationship mapping
+- [ ] Usage-based loading optimization
 
 ## Technical Implementation
 
-### Document Chunking Strategy
+### Smart Loading Strategy
 
 ```typescript
-interface DocumentChunk {
-  id: string;
-  documentId: string;
-  topicId: string;
+interface ContextManager {
   projectId: string;
-  content: string;
-  heading: string;
-  anchorId: string;
-  startOffset: number;
-  endOffset: number;
-  embedding: number[];
-  tsVector: string;
-  metadata: {
-    level: number; // heading level
-    parentHeading?: string;
-    tags: string[];
-  };
+  maxTokens: number;
+  loadedDocs: Map<string, Document>;
+  tokenBudget: number;
+  accessPatterns: Map<string, number>;
 }
 
-// Chunking algorithm
-function chunkDocument(markdown: string): DocumentChunk[] {
-  const chunks: DocumentChunk[] = [];
-  const headingRegex = /^(#{1,6})\s+(.+)$/gm;
-  
-  // Split by headings
-  const sections = markdown.split(headingRegex);
-  
-  for (let i = 0; i < sections.length; i += 3) {
-    const level = sections[i].length;
-    const heading = sections[i + 1];
-    const content = sections[i + 2];
-    
-    // Further split large sections
-    const subChunks = splitByTokenCount(content, {
-      minTokens: 400,
-      maxTokens: 800,
-      overlap: 100
+class SmartContextLoader {
+  async loadProject(projectSlug: string, userContext?: string): Promise<LoadResult> {
+    const project = await db.project.findUnique({
+      where: { slug: projectSlug },
+      include: {
+        topics: {
+          include: {
+            documents: {
+              select: {
+                id: true,
+                title: true,
+                token_count: true,
+                access_count: true,
+                updated_at: true
+              }
+            }
+          }
+        }
+      }
     });
     
-    chunks.push(...subChunks.map(chunk => ({
-      // ... chunk properties
-    })));
+    const totalTokens = project.topics.reduce(
+      (sum, topic) => sum + topic.documents.reduce(
+        (topicSum, doc) => topicSum + doc.token_count, 0
+      ), 0
+    );
+    
+    if (totalTokens <= this.contextBudget) {
+      // Load everything
+      return this.loadFullProject(project);
+    } else {
+      // Smart selection based on:
+      // 1. User's current context
+      // 2. Document access patterns
+      // 3. Document relationships
+      // 4. Recency
+      return this.loadSelectively(project, userContext);
+    }
   }
   
-  return chunks;
+  private async loadSelectively(project: Project, context?: string): Promise<LoadResult> {
+    // Priority scoring for documents
+    const scores = await this.calculateDocumentPriorities(project, context);
+    
+    // Load documents until budget exhausted
+    const toLoad = [];
+    let currentTokens = 0;
+    
+    for (const doc of scores) {
+      if (currentTokens + doc.token_count <= this.contextBudget) {
+        toLoad.push(doc);
+        currentTokens += doc.token_count;
+      }
+    }
+    
+    return this.loadDocuments(toLoad);
+  }
 }
 ```
 
-### Search Implementation
+### In-Context Search Implementation
 
 ```typescript
-// Hybrid search query
-async function searchDocs(
-  projectSlug: string,
-  query: string,
-  options: SearchOptions
-): Promise<SearchResult[]> {
-  // 1. Generate query embedding
-  const queryEmbedding = await generateEmbedding(query);
+// Search within loaded context - no database queries needed
+class ContextSearcher {
+  private loadedContext: Map<string, Document>;
   
-  // 2. Parallel search
-  const [keywordResults, semanticResults] = await Promise.all([
-    // Full-text search
-    db.$queryRaw`
-      SELECT 
-        c.*,
-        ts_rank(c.ts_vector, plainto_tsquery('english', ${query})) as keyword_score
-      FROM chunks c
-      JOIN documents d ON c.document_id = d.id
-      JOIN topics t ON d.topic_id = t.id
-      JOIN projects p ON t.project_id = p.id
-      WHERE 
-        p.slug = ${projectSlug}
-        AND c.ts_vector @@ plainto_tsquery('english', ${query})
-      ORDER BY keyword_score DESC
-      LIMIT ${options.limit * 2}
-    `,
+  async searchInContext(
+    query: string,
+    options: SearchOptions
+  ): Promise<SearchResult[]> {
+    // Search happens entirely in memory on loaded documents
+    const results: SearchResult[] = [];
     
-    // Semantic search
-    db.$queryRaw`
-      SELECT 
-        c.*,
-        1 - (c.embedding <=> ${queryEmbedding}::vector) as semantic_score
-      FROM chunks c
-      JOIN documents d ON c.document_id = d.id
-      JOIN topics t ON d.topic_id = t.id
-      JOIN projects p ON t.project_id = p.id
-      WHERE p.slug = ${projectSlug}
-      ORDER BY c.embedding <=> ${queryEmbedding}::vector
-      LIMIT ${options.limit * 2}
-    `
-  ]);
+    for (const [docId, doc] of this.loadedContext) {
+      const matches = this.findMatches(doc.content, query);
+      
+      if (matches.length > 0) {
+        results.push({
+          documentId: docId,
+          title: doc.title,
+          matches: matches.map(m => ({
+            text: m.text,
+            context: m.context,
+            score: m.relevance,
+            anchorId: m.anchorId
+          })),
+          score: this.calculateRelevance(matches, doc)
+        });
+      }
+    }
+    
+    // Sort by relevance
+    return results
+      .sort((a, b) => b.score - a.score)
+      .slice(0, options.limit);
+  }
   
-  // 3. Merge and rank
-  return rankResults(keywordResults, semanticResults, options);
+  private findMatches(content: string, query: string): Match[] {
+    // Smart matching that understands markdown structure
+    const sections = this.parseMarkdownSections(content);
+    const matches: Match[] = [];
+    
+    for (const section of sections) {
+      // Check heading match (higher weight)
+      if (section.heading.toLowerCase().includes(query.toLowerCase())) {
+        matches.push({
+          type: 'heading',
+          text: section.heading,
+          context: section.content.substring(0, 200),
+          relevance: 1.0,
+          anchorId: section.anchorId
+        });
+      }
+      
+      // Check content match
+      const contentMatches = this.searchInText(section.content, query);
+      matches.push(...contentMatches);
+    }
+    
+    return matches;
+  }
 }
 ```
 
@@ -229,43 +264,42 @@ function calculateFinalScore(factors: RankingFactors): number {
 
 ## Dependencies
 
-- PostgreSQL with pgvector extension
-- OpenAI/Anthropic API for embeddings
-- Background job processor (Bull/BullMQ)
-- Redis for caching (optional)
+- PostgreSQL (no pgvector needed)
+- No embedding APIs required
+- Simple caching (in-memory or Redis)
+- Token counter library
 
 ## Configuration
 
 Add to environment:
 ```
-EMBEDDING_MODEL=text-embedding-3-small
-EMBEDDING_DIMENSION=1536
-SEARCH_CACHE_TTL=3600
-CHUNK_MIN_TOKENS=400
-CHUNK_MAX_TOKENS=800
-CHUNK_OVERLAP=100
+CONTEXT_BUDGET=100000
+CACHE_TTL=3600
+MAX_PROJECT_SIZE=150000
+PREFETCH_RELATED=true
+USE_ACCESS_PATTERNS=true
 ```
 
 ## Success Metrics
 
-- ✅ Full-text search operational
-- ✅ Semantic search working
-- ✅ <300ms search latency
-- ✅ 90%+ relevant results in top 5
-- ✅ Background indexing functional
+- ✅ Full project loading for projects <100k tokens
+- ✅ Smart selection for larger projects
+- ✅ <100ms in-context search
+- ✅ 95%+ relevant results (no retrieval failures)
+- ✅ Efficient context caching
 
 ## Output
 
 By end of Phase 2:
-- Production-ready hybrid search system
-- Efficient document processing pipeline
-- Scalable indexing infrastructure
+- Context-first architecture fully operational
+- Smart loading strategies implemented
+- Fast in-context search
 - Ready for review system in Phase 3
 
 ## Notes
 
-1. **Embedding Strategy**: Start with OpenAI's text-embedding-3-small for cost efficiency
-2. **Chunking**: Preserve context by including parent heading in chunks
-3. **Caching**: Implement Redis caching for popular queries
-4. **Monitoring**: Add metrics for search quality and performance
-5. **Fallbacks**: Always have keyword search as fallback if embeddings fail
+1. **Context Strategy**: Most projects will fit entirely in context
+2. **Loading Priority**: Use access patterns and recency for smart loading
+3. **Caching**: Cache frequently accessed projects in memory
+4. **Monitoring**: Track context usage and loading patterns
+5. **Fallbacks**: For huge projects, load core docs + on-demand loading

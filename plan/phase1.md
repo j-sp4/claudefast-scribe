@@ -1,39 +1,43 @@
-# Phase 1: Core MCP Tools & Database Infrastructure
+# Phase 1: Core MCP Tools & Database Infrastructure (Context-First Architecture)
 
 **Duration**: Week 1 (Days 1-7)  
-**Goal**: Replace file-based system with database and implement all core MCP tools
+**Goal**: Replace file-based system with database for persistence/organization and implement all core MCP tools using a context-first approach
 
 ## Overview
 
-The current prototype uses a single KNOWLEDGE.md file and only implements 2 MCP tools. Phase 1 will establish the proper database foundation and implement all 10+ MCP tools specified in the MVP.
+The current prototype uses a single KNOWLEDGE.md file and only implements 2 MCP tools. Phase 1 will establish a simplified database for storage and organization, while leveraging large context windows instead of traditional RAG for retrieval.
 
 ## Key Deliverables
 
-### 1. Database Schema Implementation
-- [ ] Set up PostgreSQL with pgvector extension
-- [ ] Create all tables from MVP spec:
+### 1. Supabase & Drizzle Setup
+- [ ] Create Supabase project
+- [ ] Install and configure Drizzle ORM
+- [ ] Define schema with Drizzle:
   - `projects` - Multi-project support
-  - `topics` - Documentation topics per project
+  - `topics` - Documentation topics per project  
   - `documents` - Versioned document content
   - `revisions` - Full revision history
   - `proposals` - Proposed changes
-  - `users` - User accounts
+  - `users` - Managed by Supabase Auth
   - `usage_events` - Analytics
-- [ ] Database migrations setup (using Prisma or similar)
-- [ ] Connection pooling and optimization
+- [ ] Generate and run Drizzle migrations
+- [ ] Set up Row Level Security (RLS) policies
+- [ ] Configure Supabase Auth with GitHub OAuth
+- [ ] Document size tracking for context management
 
-### 2. Core MCP Tools Implementation
+### 2. Context-First MCP Tools Implementation
 
-Replace current 2 tools with full suite:
+Replace current 2 tools with context-aware suite:
 
 #### Discovery Tools
-- [ ] `list_projects` - Browse available projects
+- [ ] `list_projects` - Browse available projects with size info
 - [ ] `list_topics` - Explore topics within a project
 
-#### Reading Tools  
+#### Context-Aware Reading Tools  
+- [ ] `load_project_context` - Load entire project docs if fits in context
 - [ ] `read_doc` - Retrieve specific documentation
-- [ ] `search_docs` - Keyword-based search (basic version)
-- [ ] `get_best_doc` - Context-aware doc retrieval
+- [ ] `search_in_context` - Search within loaded context (no RAG)
+- [ ] `smart_load` - Intelligently load relevant sections for large projects
 
 #### Contribution Tools
 - [ ] `propose_update` - Submit documentation changes
@@ -56,85 +60,166 @@ Replace current 2 tools with full suite:
 
 ## Technical Implementation
 
-### Database Setup
-
-```sql
--- Core schema excerpt
-CREATE TABLE projects (
-  id UUID PRIMARY KEY,
-  slug VARCHAR(255) UNIQUE NOT NULL,
-  name VARCHAR(255) NOT NULL,
-  created_at TIMESTAMP DEFAULT NOW()
-);
-
-CREATE TABLE topics (
-  id UUID PRIMARY KEY,
-  project_id UUID REFERENCES projects(id),
-  slug VARCHAR(255) NOT NULL,
-  title VARCHAR(255) NOT NULL,
-  path VARCHAR(500),
-  tags JSONB DEFAULT '[]',
-  UNIQUE(project_id, slug)
-);
-
-CREATE TABLE documents (
-  id UUID PRIMARY KEY,
-  topic_id UUID REFERENCES topics(id),
-  version INTEGER NOT NULL,
-  title VARCHAR(255) NOT NULL,
-  content_md TEXT NOT NULL,
-  updated_at TIMESTAMP DEFAULT NOW(),
-  UNIQUE(topic_id, version)
-);
-```
-
-### Tool Implementation Pattern
+### Drizzle Schema Definition
 
 ```typescript
-// Example: list_topics implementation
+// drizzle/schema.ts
+import { pgTable, uuid, text, timestamp, integer, jsonb, unique } from 'drizzle-orm/pg-core';
+import { relations } from 'drizzle-orm';
+
+export const projects = pgTable('projects', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  slug: text('slug').unique().notNull(),
+  name: text('name').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
+  createdBy: uuid('created_by') // References Supabase auth.users
+});
+
+export const topics = pgTable('topics', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  projectId: uuid('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+  slug: text('slug').notNull(),
+  title: text('title').notNull(),
+  path: text('path'),
+  tags: jsonb('tags').default([]),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow()
+}, (table) => ({
+  uniqueProjectSlug: unique().on(table.projectId, table.slug)
+}));
+
+export const documents = pgTable('documents', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  topicId: uuid('topic_id').notNull().references(() => topics.id, { onDelete: 'cascade' }),
+  version: integer('version').notNull().default(1),
+  title: text('title').notNull(),
+  contentMd: text('content_md').notNull(),
+  tokenCount: integer('token_count').notNull(), // Track size for context management
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
+  updatedBy: uuid('updated_by')
+}, (table) => ({
+  uniqueTopicVersion: unique().on(table.topicId, table.version)
+}));
+
+// Relations
+export const projectRelations = relations(projects, ({ many }) => ({
+  topics: many(topics)
+}));
+
+export const topicRelations = relations(topics, ({ one, many }) => ({
+  project: one(projects, {
+    fields: [topics.projectId],
+    references: [projects.id]
+  }),
+  documents: many(documents)
+}));
+
+export const documentRelations = relations(documents, ({ one }) => ({
+  topic: one(topics, {
+    fields: [documents.topicId],
+    references: [topics.id]
+  })
+}));
+
+// drizzle.config.ts
+import type { Config } from 'drizzle-kit';
+
+export default {
+  schema: './drizzle/schema.ts',
+  out: './drizzle/migrations',
+  driver: 'pg',
+  dbCredentials: {
+    connectionString: process.env.DATABASE_URL!
+  }
+} satisfies Config;
+```
+
+### Tool Implementation with Drizzle & Supabase
+
+```typescript
+import { drizzle } from 'drizzle-orm/postgres-js';
+import postgres from 'postgres';
+import { createClient } from '@supabase/supabase-js';
+import * as schema from './drizzle/schema';
+
+// Drizzle for database queries
+const client = postgres(process.env.DATABASE_URL!);
+export const db = drizzle(client, { schema });
+
+// Supabase for auth
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_KEY!
+);
+
+// Example: Context-first implementation with Drizzle
 server.tool(
-  'list_topics',
-  'Explore documentation topics for a project',
+  'load_project_context',
+  'Load entire project documentation into context if size permits',
   {
     projectSlug: z.string(),
-    query: z.string().optional()
+    maxTokens: z.number().default(100000)
   },
-  async ({ projectSlug, query }) => {
-    const topics = await db.topic.findMany({
-      where: {
-        project: { slug: projectSlug },
-        ...(query && {
-          OR: [
-            { title: { contains: query, mode: 'insensitive' } },
-            { tags: { has: query } }
-          ]
-        })
-      },
-      select: {
-        id: true,
-        slug: true,
-        title: true,
-        path: true,
-        tags: true
+  async ({ projectSlug, maxTokens }) => {
+    // Get project with all documents using Drizzle
+    const project = await db.query.projects.findFirst({
+      where: eq(schema.projects.slug, projectSlug),
+      with: {
+        topics: {
+          with: {
+            documents: true
+          }
+        }
       }
     });
     
-    return {
-      content: [{
-        type: 'text',
-        text: JSON.stringify({ topics }, null, 2)
-      }]
-    };
+    if (!project) {
+      return { content: [{ type: 'text', text: 'Project not found' }] };
+    }
+    
+    // Calculate total tokens
+    const totalTokens = project.topics.reduce(
+      (sum, topic) => 
+        sum + topic.documents.reduce(
+          (tSum, doc) => tSum + doc.tokenCount, 0
+        ), 0
+    );
+    
+    if (totalTokens <= maxTokens) {
+      // Return full project context
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({ 
+            strategy: 'full_context',
+            total_tokens: totalTokens,
+            project: project 
+          }, null, 2)
+        }]
+      };
+    } else {
+      // Return metadata for smart loading
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({ 
+            strategy: 'selective_loading',
+            total_tokens: totalTokens,
+            message: 'Project too large for context, use smart_load tool'
+          }, null, 2)
+        }]
+      };
+    }
   }
 );
 ```
 
 ## Daily Milestones
 
-### Day 1-2: Database Foundation
-- Set up PostgreSQL locally and in development
-- Create and test schema
-- Set up migrations
+### Day 1-2: Supabase Setup
+- Create Supabase project
+- Set up schema through Supabase dashboard
+- Configure Auth with GitHub OAuth
+- Test RLS policies
 
 ### Day 3-4: Tool Implementation
 - Implement all read tools
@@ -184,9 +269,11 @@ server.tool(
 
 ## Dependencies
 
-- PostgreSQL 15+ with pgvector
-- Prisma or similar ORM
-- Database hosting (local for now)
+- Supabase account (free tier sufficient for MVP)
+- Drizzle ORM and drizzle-kit
+- @supabase/supabase-js (for auth)
+- postgres driver for Drizzle
+- Vercel account for deployment
 - Environment variables setup
 
 ## Success Metrics
@@ -235,25 +322,47 @@ By end of Phase 1:
 
 ### Implementation Guidelines
 
-1. **Environment Variables**: Create `.env` file with:
+1. **Environment Variables**: Create `.env.local` file with:
    ```
-   DATABASE_URL=postgresql://...
+   NEXT_PUBLIC_SUPABASE_URL=https://[PROJECT_ID].supabase.co
+   NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJ...
+   SUPABASE_SERVICE_KEY=eyJ...
    ANTHROPIC_API_KEY=...
    ANTHROPIC_MODEL=claude-3-5-sonnet-20241022
-   MCP_BASE_URL=http://localhost:3000
-   KNOWLEDGE_FILE_PATH=/path/to/knowledge.md
    ```
 
-2. **Configuration Module**: Create centralized config:
+2. **Database Client Setup**: Create Drizzle and Supabase clients:
    ```typescript
+   // lib/db.ts
+   import { drizzle } from 'drizzle-orm/postgres-js';
+   import postgres from 'postgres';
+   import { createClient } from '@supabase/supabase-js';
+   import * as schema from '../drizzle/schema';
+   
+   // Drizzle for queries
+   const client = postgres(process.env.DATABASE_URL!);
+   export const db = drizzle(client, { schema });
+   
+   // Supabase for auth
+   export const supabase = createClient(
+     process.env.NEXT_PUBLIC_SUPABASE_URL!,
+     process.env.SUPABASE_SERVICE_KEY!,
+     {
+       auth: {
+         autoRefreshToken: false,
+         persistSession: false
+       }
+     }
+   );
+   
    export const config = {
-     db: { url: process.env.DATABASE_URL },
      anthropic: { 
        apiKey: process.env.ANTHROPIC_API_KEY,
        model: process.env.ANTHROPIC_MODEL 
      },
-     paths: { 
-       knowledge: process.env.KNOWLEDGE_FILE_PATH 
+     context: {
+       maxTokens: 100000,
+       cacheEnabled: true
      }
    };
    ```

@@ -33,7 +33,7 @@ Based on customer demand and the MVP specification, the beta must deliver:
 - ✅ Multi-project documentation management
 - ✅ Full MCP tool suite (read, search, propose, review, approve)
 - ✅ Database-backed storage with versioning
-- ✅ Hybrid search (keyword + semantic)
+- ✅ Context-first search (leveraging large context windows)
 - ✅ Review and moderation workflow
 - ✅ User authentication and roles
 - ✅ Rate limiting and abuse protection
@@ -47,23 +47,24 @@ Based on customer demand and the MVP specification, the beta must deliver:
 
 ## Development Timeline (4 Weeks)
 
-### Phase 1: Core MCP Tools & Database (Week 1)
-**Goal**: Implement the full MCP tool suite with proper database backing
+### Phase 1: Core MCP Tools & Supabase (Week 1)
+**Goal**: Implement the full MCP tool suite with Supabase for persistence and auth
 
 Key Deliverables:
-- PostgreSQL schema implementation
-- All 10+ MCP tools from MVP spec
-- Migration from file to database storage
-- Basic project/topic/document structure
+- Supabase database schema with RLS policies
+- Drizzle ORM setup for type-safe queries
+- All 10+ MCP tools with context-first approach
+- Supabase Auth with GitHub OAuth
+- Smart context loading system
 
-### Phase 2: Search & Retrieval System (Week 2)
-**Goal**: Build robust search infrastructure with ranking
+### Phase 2: Context Management & Search (Week 2)
+**Goal**: Build intelligent context loading and in-context search
 
 Key Deliverables:
-- Full-text search with PostgreSQL
-- Semantic search with pgvector
-- Hybrid ranking algorithm
-- Document chunking and indexing
+- Smart document loading strategies
+- In-context search (no RAG needed)
+- Context budget management
+- Usage-based optimization
 
 ### Phase 3: Review & Moderation System (Week 3)
 **Goal**: Implement the contribution and review workflow
@@ -71,26 +72,26 @@ Key Deliverables:
 Key Deliverables:
 - Proposal submission and tracking
 - Review queue and approval flow
-- User authentication (GitHub OAuth)
-- Role-based access control
-- Basic abuse protection
+- Supabase RLS for role-based access
+- Rate limiting with Edge Functions
+- Abuse protection policies
 
 ### Phase 4: Production & Beta Launch (Week 4)
-**Goal**: Deploy to cloud and onboard beta customers
+**Goal**: Deploy to Vercel and onboard beta customers
 
 Key Deliverables:
-- Cloud deployment (Vercel/Fly.io)
-- Production database setup
-- Monitoring and logging
+- Vercel deployment with Supabase
+- Production environment setup
+- Monitoring (Vercel + Supabase dashboards)
 - Documentation and onboarding
 - Beta customer support
 
 ## Risk Mitigation
 
 ### Technical Risks
-1. **Search Quality**: Mitigate with iterative tuning and user feedback
+1. **Context Limits**: Smart loading for projects >100k tokens
 2. **Scale**: Start with managed PostgreSQL, monitor closely
-3. **AI Costs**: Implement caching and rate limits
+3. **Performance**: In-memory search and caching
 
 ### Business Risks
 1. **Adoption**: Already have interested customers from hackathon
@@ -122,15 +123,16 @@ Key Deliverables:
 ## Resource Requirements
 
 ### Technical
-- PostgreSQL with pgvector extension
-- Anthropic API access (for embeddings)
-- Cloud hosting (Vercel/Fly.io)
-- GitHub OAuth application
+- Supabase (database, auth, storage)
+- Drizzle ORM for migrations
+- Anthropic API access (for Q&A, not embeddings)
+- Vercel hosting
+- GitHub OAuth (via Supabase Auth)
 
 ### Team
-- 1-2 full-time developers
-- Part-time support for customer onboarding
-- Access to original hackathon team for knowledge transfer
+- 1 full-time developer (YC founder mindset)
+- Automated onboarding via documentation
+- Community support model for beta
 
 ## Next Steps
 

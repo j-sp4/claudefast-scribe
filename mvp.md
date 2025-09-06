@@ -47,20 +47,23 @@ Optional (if quick): `usage_events(id, user_id, tool, doc_id, outcome, created_a
 
 ## 5) Storage & Search
 
-- Postgres as the only store (managed: Supabase/Neon/RDS).
-- Full‑text search (tsvector/BM25) across doc chunks; simple tokenizer for Markdown headings.
-- Embeddings optional (pgvector) — add later; MVP ships with keyword search.
+- Supabase PostgreSQL as the only store.
+- Context-first approach - load full docs into context when possible.
+- Simple text search within loaded context (no embeddings needed).
+- Smart loading for projects that exceed context limits.
 
-Chunking:
-- Split by headings and size (400–800 tokens). Store chunk table or computed view for search.
+Document Organization:
+- Track token counts per document for context management.
+- Organize by project → topic → document hierarchy.
 
 ---
 
-## 6) Retrieval & Ranking (v0)
+## 6) Retrieval & Context Loading (v0)
 
-- Rank by keyword score + light recency boost.
-- Default to latest stable `version` for a topic.
-- Return top 5 results with snippet and `anchorId`.
+- Load entire project if under context budget (100k tokens).
+- Smart selection based on access patterns for larger projects.
+- In-context search with markdown structure awareness.
+- Return results with anchors for deep linking.
 
 ---
 
@@ -82,39 +85,41 @@ Policies:
 
 ## 8) Auth, Roles, and Abuse Controls (v0)
 
-- Auth: GitHub OAuth.
+- Auth: Supabase Auth with GitHub OAuth.
 - Roles: `user` (read, propose), `reviewer` (approve/reject), `admin` (manage projects/topics).
-- Rate limits: per‑IP and per‑user caps on `propose_update` (comments omitted in MVP).
+- Rate limits: Supabase RLS policies and Edge Functions.
 - Size limits: max proposal content length; strip images/attachments.
 
 ---
 
 ## 9) Deployment & Ops (v0)
 
-- Single service (Node/TypeScript) implementing MCP over stdio or HTTP; deploy on Vercel/Fly/Render.
-- Postgres managed; automated migrations.
-- Background job runner optional; re‑index inline on approval for MVP.
-- Logging: request logs + error tracking.
+- Next.js app on Vercel implementing MCP over HTTP.
+- Supabase for database, auth, and storage.
+- Drizzle ORM for type-safe queries and migrations.
+- Simple caching for frequently accessed projects.
+- Logging: Vercel logs + Supabase logs.
 
 ---
 
 ## 10) Milestones & Checklist (2 weeks)
 
 Week 1:
-- DB schema + migrations; seed 3–5 topics for one example project.
-- Implement MCP tools: `list_topics`, `read_doc`, `search_docs`.
+- Supabase project setup with schema; seed 3–5 topics for one example project.
+- Implement MCP tools: `list_projects`, `load_project_context`, `search_in_context`.
 - Implement `propose_update` and `review_queue`.
 
 Week 2:
-- Implement `approve_proposal`/`reject_proposal` and version bump + re‑index.
-- Markdown lint + link checker in proposal intake.
-- Basic auth (GitHub), roles, and rate limits.
+- Implement `approve_proposal`/`reject_proposal` and version management.
+- Smart loading for large projects.
+- Supabase Auth integration with GitHub OAuth.
 - Documentation: how to install MCP client and try flows end‑to‑end.
 
 ---
 
 ## 11) Success Criteria (v0)
 
-- Docs are discoverable via `search_docs` with useful snippets.
-- At least 10 proposals submitted; ≥5 approved and reflected in `read_doc`.
-- Median response < 300ms for read/search on small corpus.
+- Full projects loadable into context for projects <100k tokens.
+- Smart loading works for larger projects.
+- At least 10 proposals submitted; ≥5 approved and reflected in documents.
+- Median response < 100ms for in-context search.

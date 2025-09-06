@@ -1,18 +1,17 @@
 import { z } from 'zod';
 import { createMcpHandler } from 'mcp-handler';
-import fs from 'fs/promises';
-import path from 'path';
 import Anthropic from '@anthropic-ai/sdk';
 import chalk from 'chalk';
+import { db } from '../../../server/lib/db';
+import { knowledgeEntries } from '../../../server/lib/db/schema';
+import { eq } from 'drizzle-orm';
 
 const model = 'claude-opus-4-1-20250805'; // 'claude-3-5-sonnet-20241022';
 
 // Force chalk to always output colors, even when piped through tee
 chalk.level = 3; // 0 = disabled, 1 = basic, 2 = 256 colors, 3 = truecolor
 
-const KNOWLEDGE_FILE_PATH = path.join(process.cwd(), '..', 'KNOWLEDGE.md');
 
-// Note: chalk.level = 3 forces colors even when output is piped
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY || '',
@@ -21,39 +20,18 @@ const anthropic = new Anthropic({
   },
 });
 
-async function readKnowledgeBase(): Promise<string> {
-  try {
-    const content = await fs.readFile(KNOWLEDGE_FILE_PATH, 'utf-8');
-    return content;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-      const initialContent = `# Knowledge Base
-
-This file contains question and answer pairs about the codebase, accumulated over time to help with future development.
-
-## Q&A Entries
-
----
-`;
-      await fs.writeFile(KNOWLEDGE_FILE_PATH, initialContent, 'utf-8');
-      return initialContent;
-    }
-    throw error;
-  }
-}
 
 async function appendToKnowledgeBase(qaEntries: Array<{question: string, answer: string}>): Promise<{added: number, skipped: number, merged: number}> {
-  let currentContent = await readKnowledgeBase();
+  // Get all existing questions from database
+  const entries = await db.select().from(knowledgeEntries);
+  const existingQuestions = new Map<string, { id: number, original: string, answer: string }>();
   
-  // Extract all existing questions from the knowledge base for faster comparison
-  const existingQuestions = new Map<string, { original: string, answer: string, position: number }>();
-  const questionRegex = /\*\*Q: ([^*]+)\*\*\nA: ([^]*?)(?=\n\n\*\*Q:|---|\n\n##|$)/gm;
-  let match;
-  while ((match = questionRegex.exec(currentContent)) !== null) {
-    const q = match[1].trim();
-    const a = match[2].trim();
-    const normalized = q.toLowerCase().replace(/[^\w\s]/g, '').trim();
-    existingQuestions.set(normalized, { original: q, answer: a, position: match.index });
+  for (const entry of entries) {
+    existingQuestions.set(entry.normalizedQuestion, { 
+      id: entry.id, 
+      original: entry.question, 
+      answer: entry.answer 
+    });
   }
   
   // Process each Q&A entry to check for duplicates or similar questions
@@ -92,10 +70,10 @@ async function appendToKnowledgeBase(qaEntries: Array<{question: string, answer:
           
           const mergedAnswer = response.content[0]?.type === 'text' ? response.content[0].text.trim() : existing.answer + '\n\n' + answer;
           
-          // Update the answer in the content
-          const oldQA = `**Q: ${existing.original}**\nA: ${existing.answer}`;
-          const newQA = `**Q: ${existing.original}**\nA: ${mergedAnswer}`;
-          currentContent = currentContent.replace(oldQA, newQA);
+          // Update the answer in the database
+          await db.update(knowledgeEntries)
+            .set({ answer: mergedAnswer, updatedAt: new Date() })
+            .where(eq(knowledgeEntries.id, existing.id));
           
           // Update our map for future comparisons in this batch
           existingQuestions.set(normalizedNewQuestion, { ...existing, answer: mergedAnswer });
@@ -106,18 +84,18 @@ async function appendToKnowledgeBase(qaEntries: Array<{question: string, answer:
           console.error(chalk.red('Error merging with AI:'), error);
           // Fall back to simple append
           const mergedAnswer = existing.answer + '\n\nAdditional information:\n' + answer;
-          const oldQA = `**Q: ${existing.original}**\nA: ${existing.answer}`;
-          const newQA = `**Q: ${existing.original}**\nA: ${mergedAnswer}`;
-          currentContent = currentContent.replace(oldQA, newQA);
+          await db.update(knowledgeEntries)
+            .set({ answer: mergedAnswer, updatedAt: new Date() })
+            .where(eq(knowledgeEntries.id, existing.id));
           existingQuestions.set(normalizedNewQuestion, { ...existing, answer: mergedAnswer });
           stats.merged++;
         }
       } else {
         // No API key, do simple append
         const mergedAnswer = existing.answer + '\n\nAdditional information:\n' + answer;
-        const oldQA = `**Q: ${existing.original}**\nA: ${existing.answer}`;
-        const newQA = `**Q: ${existing.original}**\nA: ${mergedAnswer}`;
-        currentContent = currentContent.replace(oldQA, newQA);
+        await db.update(knowledgeEntries)
+          .set({ answer: mergedAnswer, updatedAt: new Date() })
+          .where(eq(knowledgeEntries.id, existing.id));
         existingQuestions.set(normalizedNewQuestion, { ...existing, answer: mergedAnswer });
         console.log(chalk.bgBlue.white(' 🔀 MERGE '), chalk.blue('Appended answer for:'), chalk.blueBright(existing.original));
         stats.merged++;
@@ -173,10 +151,10 @@ async function appendToKnowledgeBase(qaEntries: Array<{question: string, answer:
               
               const mergedAnswer = mergeResponse.content[0]?.type === 'text' ? mergeResponse.content[0].text.trim() : existing.answer + '\n\n' + answer;
               
-              // Update the answer in the content
-              const oldQA = `**Q: ${existing.original}**\nA: ${existing.answer}`;
-              const newQA = `**Q: ${existing.original}**\nA: ${mergedAnswer}`;
-              currentContent = currentContent.replace(oldQA, newQA);
+              // Update the answer in the database
+              await db.update(knowledgeEntries)
+                .set({ answer: mergedAnswer, updatedAt: new Date() })
+                .where(eq(knowledgeEntries.id, existing.id));
               
               // Update our map
               existingQuestions.set(normalizedMatched, { ...existing, answer: mergedAnswer });
@@ -193,27 +171,16 @@ async function appendToKnowledgeBase(qaEntries: Array<{question: string, answer:
     
     // If not found as duplicate or similar, add as new
     if (!foundSimilar) {
-      processedEntries.push(`\n**Q: ${question}**\nA: ${answer}\n`);
+      const normalizedQuestion = question.toLowerCase().replace(/[^\w\s]/g, '').trim();
+      await db.insert(knowledgeEntries).values({
+        question,
+        answer,
+        normalizedQuestion,
+      });
       stats.added++;
       console.log(chalk.bgGreen.black(' ✅ ADD '), chalk.green('New question:'), chalk.greenBright(question));
     }
   }
-  
-  // Only update if there are new entries to add
-  if (processedEntries.length > 0) {
-    const newEntriesText = processedEntries.join('\n');
-    // Find the last --- marker and insert before it
-    const lastDashIndex = currentContent.lastIndexOf('\n---\n');
-    if (lastDashIndex !== -1) {
-      currentContent = currentContent.slice(0, lastDashIndex) + newEntriesText + '\n' + currentContent.slice(lastDashIndex);
-    } else {
-      // If no --- marker found, append at the end
-      currentContent += newEntriesText;
-    }
-  }
-  
-  // Write the updated content
-  await fs.writeFile(KNOWLEDGE_FILE_PATH, currentContent, 'utf-8');
   
   return stats;
 }
@@ -252,7 +219,9 @@ const handler = createMcpHandler(
         questions: z.array(z.string()).describe("Array of questions you want to ask about the codebase or problems you're trying to solve"),
       },
       async ({ questions }) => {
-        const knowledgeContent = await readKnowledgeBase();
+        // Get all knowledge entries from database and format as markdown
+        const entries = await db.select().from(knowledgeEntries);
+        const knowledgeContent = entries.map(e => `**Q: ${e.question}**\nA: ${e.answer}`).join('\n\n');
 
         console.log(chalk.bgCyan.black.bold('\n\n\n ============================================================ '));
         console.log(chalk.bgCyan.black.bold(' 📋  MCP TOOL: ASK_QUESTIONS                                 '));
@@ -348,7 +317,3 @@ const handler = createMcpHandler(
 );
 
 export { handler as GET, handler as POST, handler as DELETE };
-
-// demo change 1755998949760
-// demo change 1755999037552
-// demo change 1755999115071

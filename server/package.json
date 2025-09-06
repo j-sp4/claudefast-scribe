@@ -6,12 +6,18 @@
     "dev": "FORCE_COLOR=3 next dev --turbopack 2>&1 | tee dev.log",
     "build": "next build --turbopack",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "db:push": "drizzle-kit push",
+    "db:studio": "drizzle-kit studio",
+    "db:migrate": "tsx server/scripts/migrate-knowledge.ts"
   },
   "dependencies": {
     "@anthropic-ai/claude-code": "^1.0.89",
     "@anthropic-ai/sdk": "^0.60.0",
+    "@neondatabase/serverless": "^1.0.1",
     "chalk": "^5.6.0",
+    "dotenv": "^17.2.2",
+    "drizzle-orm": "^0.44.5",
     "mcp-handler": "^1.0.1",
     "next": "15.5.0",
     "react": "19.1.0",
@@ -24,9 +30,11 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "drizzle-kit": "^0.31.4",
     "eslint": "^9",
     "eslint-config-next": "15.5.0",
     "tailwindcss": "^4",
+    "tsx": "^4.20.5",
     "typescript": "^5"
   }
 }

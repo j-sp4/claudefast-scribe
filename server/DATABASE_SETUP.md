@@ -26,12 +26,7 @@ cd server
 npm run db:push
 ```
 
-### 4. Migrate Existing Data (if you have KNOWLEDGE.md)
-```bash
-npm run db:migrate
-```
-
-### 5. Start the Server
+### 4. Start the Server
 ```bash
 npm run dev
 ```
@@ -48,7 +43,7 @@ npm run dev
 - **server/lib/db/schema.ts**: Database schema definition
 - **server/lib/db/index.ts**: Database client setup
 - **drizzle.config.ts**: Drizzle ORM configuration
-- **server/scripts/migrate-knowledge.ts**: Migration script
+- **server/lib/utils/knowledge-parser.ts**: Shared parsing utilities
 
 ### Files Deleted:
 - **sync/** folder: No longer needed

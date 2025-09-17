@@ -7,6 +7,7 @@ import chalk from 'chalk';
 import { db, projects, topics, documents, proposals, revisions } from '@/lib/db';
 import { eq, and, like, desc, asc, or, sql, isNull } from 'drizzle-orm';
 import { EmbeddingService } from '@/lib/services/embeddings';
+import { logger } from '@/lib/logger';
 
 const model = 'claude-3-5-sonnet-20241022';
 
@@ -1079,4 +1080,21 @@ const handler = createMcpHandler(
   }
 );
 
-export { handler as GET, handler as POST, handler as DELETE };
+// Wrap handler with logging
+const loggedHandler = async (req: Request) => {
+  const url = new URL(req.url);
+  logger.info(`MCP Request: ${req.method} ${url.pathname}`, {
+    searchParams: Object.fromEntries(url.searchParams),
+  });
+  
+  try {
+    const response = await handler(req);
+    logger.info(`MCP Response: ${response.status}`);
+    return response;
+  } catch (error) {
+    logger.error('MCP Handler error:', error);
+    throw error;
+  }
+};
+
+export { loggedHandler as GET, loggedHandler as POST, loggedHandler as DELETE };

@@ -4,6 +4,11 @@ import { AuthProvider } from "@/contexts/AuthContext";
 import { Navigation } from "@/components/Navigation";
 import "./globals.css";
 
+// Initialize logging on server startup
+if (typeof window === 'undefined') {
+  import('@/lib/startup-logger');
+}
+
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {

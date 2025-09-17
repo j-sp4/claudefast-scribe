@@ -17,7 +17,9 @@
       "Bash(chmod:*)",
       "Bash(lsof:*)",
       "Bash(kill:*)",
-      "Bash(npm uninstall:*)"
+      "Bash(npm uninstall:*)",
+      "Bash(tree:*)",
+      "Bash(code --version)"
     ],
     "deny": [],
     "ask": []

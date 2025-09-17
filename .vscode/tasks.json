@@ -1,0 +1,65 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "npm: build-extension",
+      "type": "shell",
+      "command": "npm",
+      "args": ["run", "compile"],
+      "options": {
+        "cwd": "${workspaceFolder}/sync/scribe-vscode"
+      },
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": "$tsc",
+      "presentation": {
+        "echo": true,
+        "reveal": "silent",
+        "focus": false,
+        "panel": "shared",
+        "showReuseMessage": false,
+        "clear": false
+      }
+    },
+    {
+      "label": "npm: watch-extension",
+      "type": "shell",
+      "command": "npm",
+      "args": ["run", "watch"],
+      "options": {
+        "cwd": "${workspaceFolder}/sync/scribe-vscode"
+      },
+      "problemMatcher": "$tsc-watch",
+      "isBackground": true,
+      "presentation": {
+        "echo": true,
+        "reveal": "silent",
+        "focus": false,
+        "panel": "shared",
+        "showReuseMessage": false,
+        "clear": false
+      }
+    },
+    {
+      "label": "npm: dev-server",
+      "type": "shell",
+      "command": "npm",
+      "args": ["run", "dev"],
+      "options": {
+        "cwd": "${workspaceFolder}/server"
+      },
+      "isBackground": true,
+      "problemMatcher": [],
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "focus": false,
+        "panel": "new",
+        "showReuseMessage": false,
+        "clear": false
+      }
+    }
+  ]
+}

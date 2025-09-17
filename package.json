@@ -1,0 +1,28 @@
+{
+  "name": "scribe-mcp-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Scribe MCP - AI-powered documentation platform",
+  "scripts": {
+    "dev": "npm run dev:server",
+    "dev:server": "cd server && npm run dev",
+    "dev:extension": "cd sync/scribe-vscode && npm run watch",
+    "build:extension": "cd sync/scribe-vscode && npm run compile",
+    "build:server": "cd server && npm run build",
+    "install:all": "npm run install:server && npm run install:extension",
+    "install:server": "cd server && npm install",
+    "install:extension": "cd sync/scribe-vscode && npm install",
+    "test:extension": "cd sync/scribe-vscode && npm test",
+    "package:extension": "cd sync/scribe-vscode && npm run package",
+    "clean": "npm run clean:server && npm run clean:extension",
+    "clean:server": "cd server && rm -rf .next",
+    "clean:extension": "cd sync/scribe-vscode && rm -rf out"
+  },
+  "workspaces": [
+    "server",
+    "sync/scribe-vscode"
+  ],
+  "devDependencies": {},
+  "author": "Scribe MCP Team",
+  "license": "MIT"
+}

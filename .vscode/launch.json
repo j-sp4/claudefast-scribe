@@ -1,0 +1,55 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Run VS Code Extension",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": [
+        "--extensionDevelopmentPath=${workspaceFolder}/sync/scribe-vscode"
+      ],
+      "outFiles": [
+        "${workspaceFolder}/sync/scribe-vscode/out/**/*.js"
+      ],
+      "preLaunchTask": "npm: build-extension",
+      "cwd": "${workspaceFolder}/sync/scribe-vscode"
+    },
+    {
+      "name": "Debug Server",
+      "type": "node",
+      "request": "launch",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "cwd": "${workspaceFolder}/server",
+      "console": "integratedTerminal",
+      "env": {
+        "NODE_ENV": "development"
+      }
+    },
+    {
+      "name": "Extension Tests",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": [
+        "--extensionDevelopmentPath=${workspaceFolder}/sync/scribe-vscode",
+        "--extensionTestsPath=${workspaceFolder}/sync/scribe-vscode/out/test/suite/index"
+      ],
+      "outFiles": [
+        "${workspaceFolder}/sync/scribe-vscode/out/test/**/*.js"
+      ],
+      "preLaunchTask": "npm: build-extension"
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Full Stack (Server + Extension)",
+      "configurations": ["Debug Server", "Run VS Code Extension"],
+      "stopAll": true,
+      "presentation": {
+        "hidden": false,
+        "group": "compound",
+        "order": 1
+      }
+    }
+  ]
+}

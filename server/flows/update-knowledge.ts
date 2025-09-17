@@ -1,8 +1,9 @@
 import { query } from "@anthropic-ai/claude-code";
-import { readFile, mkdir } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+// import { mkdir } from "node:fs/promises";  // For future git worktree support
+// import { execFile } from "node:child_process";  // For future git worktree support
+// import { promisify } from "node:util";  // For future git worktree support
 import Anthropic from "@anthropic-ai/sdk";
 
 const anthropic = new Anthropic({
@@ -34,7 +35,7 @@ async function extractQAStringsFromKnowledge(knowledgeMarkdown: string): Promise
     if (parsed && parsed.length > 0) {
       return parsed;
     }
-  } catch (err) {
+  } catch {
     // Fall back to local parsing below
   }
 
@@ -175,7 +176,7 @@ function buildValidationPrompt(qa: string, knowledgePath: string): string {
 }
 
 export async function checkAndUpdateKnowledgeBase(useRandom: boolean = false) {
-  const execFileAsync = promisify(execFile);
+  // const execFileAsync = promisify(execFile);  // Unused - keeping for future git worktree support
   const chalk = (await import('chalk')).default;
   chalk.level = 3; // Force colors
 
@@ -224,6 +225,8 @@ export async function checkAndUpdateKnowledgeBase(useRandom: boolean = false) {
 }
 
 // Helpers
+// Commenting out for now - will use when git worktree support is needed
+/*
 async function createGitWorktree(
   repoRoot: string,
   execFileAsync: (file: string, args?: readonly string[] | undefined, options?: any) => Promise<{ stdout: string; stderr: string }>
@@ -261,4 +264,5 @@ async function createGitWorktree(
 
   return { worktreeDir, branchName };
 }
+*/
 

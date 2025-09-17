@@ -14,7 +14,10 @@
       "Bash(tsx scripts/check-db.ts:*)",
       "Bash(npx tsx:*)",
       "Bash(cat:*)",
-      "Bash(chmod:*)"
+      "Bash(chmod:*)",
+      "Bash(lsof:*)",
+      "Bash(kill:*)",
+      "Bash(npm uninstall:*)"
     ],
     "deny": [],
     "ask": []

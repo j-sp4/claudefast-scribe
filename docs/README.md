@@ -1,21 +1,22 @@
-## Getting Started
+## Prerequisites
 
-### Prerequisites
-- Node.js 16+
 - PostgreSQL database (via Neon.tech)
+- Node.js 16+
 
-### Environment Setup
-1. Create a free database at [neon.tech](https://neon.tech)
+## Setup
+
+1. Create a Neon database at [neon.tech](https://neon.tech)
 2. Copy your database connection string
-3. Create `.env.local` with:
+3. Create `.env.local` in the server directory:
 ```bash
-DATABASE_URL=your_neon_connection_string
-ANTHROPIC_API_KEY=your_api_key
+DATABASE_URL=your-neon-connection-string
+ANTHROPIC_API_KEY=your-api-key
 ```
-
-### Installation
+4. Install dependencies:
 ```bash
 npm install
-npm run db:push  # Initialize database schema
-npm run dev
+```
+5. Initialize database:
+```bash
+npm run db:push
 ```

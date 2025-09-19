@@ -5,7 +5,7 @@ export const userRoleEnum = pgEnum('user_role', ['user', 'reviewer', 'admin'])
 export const proposalStatusEnum = pgEnum('proposal_status', ['pending', 'approved', 'rejected', 'withdrawn'])
 
 export const users = pgTable('users', {
-  id: uuid('id').primaryKey().defaultRandom(),
+  id: uuid('id').primaryKey(), // Remove defaultRandom() since we use Supabase Auth user IDs
   email: varchar('email', { length: 255 }).notNull().unique(),
   name: varchar('name', { length: 255 }),
   githubUsername: varchar('github_username', { length: 255 }),

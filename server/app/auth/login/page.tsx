@@ -18,7 +18,7 @@ export default function LoginPage() {
     setError(null);
 
     const supabase = createClient();
-    const { error } = await supabase.auth.signInWithPassword({
+    const { data, error } = await supabase.auth.signInWithPassword({
       email,
       password,
     });
@@ -28,7 +28,6 @@ export default function LoginPage() {
       setLoading(false);
       return;
     }
-
     router.push('/');
     router.refresh();
   };

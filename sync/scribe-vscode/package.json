@@ -1,0 +1,226 @@
+{
+  "name": "scribe-vscode",
+  "displayName": "Scribe MCP",
+  "description": "AI-powered documentation sync for VS Code - automatically sync your code documentation to Scribe MCP",
+  "version": "0.1.0",
+  "publisher": "scribe-mcp",
+  "icon": "assets/icon.png",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Other",
+    "Machine Learning"
+  ],
+  "keywords": [
+    "documentation",
+    "AI",
+    "sync",
+    "MCP",
+    "Claude"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "Scribe MCP",
+      "properties": {
+        "scribe.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable/disable Scribe sync"
+        },
+        "scribe.serverUrl": {
+          "type": "string",
+          "default": "http://localhost:3004",
+          "description": "Scribe MCP server URL"
+        },
+        "scribe.watchPatterns": {
+          "type": "array",
+          "default": [
+            "**/*.{js,ts,jsx,tsx,md}",
+            "**/README.md"
+          ],
+          "description": "File patterns to watch for changes"
+        },
+        "scribe.ignorePatterns": {
+          "type": "array",
+          "default": [
+            "**/node_modules/**",
+            "**/.git/**",
+            "**/dist/**",
+            "**/out/**",
+            "**/.next/**"
+          ],
+          "description": "Patterns to ignore"
+        },
+        "scribe.syncDelay": {
+          "type": "number",
+          "default": 5000,
+          "description": "Delay before syncing changes (ms)"
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "scribe.enable",
+        "title": "Scribe: Enable Sync",
+        "category": "Scribe"
+      },
+      {
+        "command": "scribe.disable",
+        "title": "Scribe: Disable Sync",
+        "category": "Scribe"
+      },
+      {
+        "command": "scribe.showStatus",
+        "title": "Scribe: Show Status",
+        "category": "Scribe"
+      },
+      {
+        "command": "scribe.openSettings",
+        "title": "Scribe: Open Settings",
+        "category": "Scribe",
+        "icon": "$(settings-gear)"
+      },
+      {
+        "command": "scribe.syncNow",
+        "title": "Scribe: Sync Now",
+        "category": "Scribe",
+        "icon": "$(sync)"
+      },
+      {
+        "command": "scribe.login",
+        "title": "Scribe: Login",
+        "category": "Scribe",
+        "icon": "$(log-in)"
+      },
+      {
+        "command": "scribe.logout",
+        "title": "Scribe: Logout",
+        "category": "Scribe",
+        "icon": "$(log-out)"
+      },
+      {
+        "command": "scribe.pauseSync",
+        "title": "Scribe: Pause Sync",
+        "category": "Scribe",
+        "icon": "$(debug-pause)"
+      },
+      {
+        "command": "scribe.resumeSync",
+        "title": "Scribe: Resume Sync",
+        "category": "Scribe",
+        "icon": "$(debug-start)"
+      },
+      {
+        "command": "scribe.showHistory",
+        "title": "Scribe: Show Sync History",
+        "category": "Scribe",
+        "icon": "$(history)"
+      },
+      {
+        "command": "scribe.clearQueue",
+        "title": "Scribe: Clear Sync Queue",
+        "category": "Scribe",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "scribe.showLogs",
+        "title": "Scribe: Show Logs",
+        "category": "Scribe"
+      },
+      {
+        "command": "scribe.testConnection",
+        "title": "Scribe: Test Connection",
+        "category": "Scribe"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "scribe",
+          "title": "Scribe MCP",
+          "icon": "assets/activity-icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "scribe": [
+        {
+          "type": "webview",
+          "id": "scribeActivity",
+          "name": "Activity",
+          "contextualTitle": "Scribe Activity"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "scribe.syncNow",
+          "when": "view == scribeActivity",
+          "group": "navigation@1"
+        },
+        {
+          "command": "scribe.openSettings",
+          "when": "view == scribeActivity",
+          "group": "navigation@2"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "scribe.enable",
+          "when": "!scribe.enabled"
+        },
+        {
+          "command": "scribe.disable",
+          "when": "scribe.enabled"
+        },
+        {
+          "command": "scribe.login",
+          "when": "!scribe.authenticated"
+        },
+        {
+          "command": "scribe.logout",
+          "when": "scribe.authenticated"
+        },
+        {
+          "command": "scribe.pauseSync",
+          "when": "scribe.syncActive"
+        },
+        {
+          "command": "scribe.resumeSync",
+          "when": "scribe.syncPaused"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "eslint src --ext ts",
+    "test": "node ./out/test/runTest.js",
+    "package": "vsce package",
+    "publish": "vsce publish"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "@types/node": "^20.x",
+    "@typescript-eslint/eslint-plugin": "^6.15.0",
+    "@typescript-eslint/parser": "^6.15.0",
+    "eslint": "^8.56.0",
+    "typescript": "^5.3.3",
+    "@vscode/test-cli": "^0.0.4",
+    "@vscode/test-electron": "^2.3.8"
+  },
+  "dependencies": {
+    "axios": "^1.6.5",
+    "debounce": "^2.0.0"
+  }
+}

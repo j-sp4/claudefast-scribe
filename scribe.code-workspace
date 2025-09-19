@@ -1,0 +1,52 @@
+{
+    "folders": [
+        {
+            "name": "Scribe Server",
+            "path": "server"
+        },
+        {
+            "name": "Scribe VS Code Extension",
+            "path": "sync/scribe-vscode"
+        },
+        {
+            "name": "Documentation",
+            "path": "."
+        }
+    ],
+    "settings": {
+        "typescript.tsdk": "sync/scribe-vscode/node_modules/typescript/lib"
+    },
+    "launch": {
+        "version": "0.2.0",
+        "configurations": [
+            {
+                "name": "Run Extension",
+                "type": "extensionHost",
+                "request": "launch",
+                "args": [
+                    "--extensionDevelopmentPath=${workspaceFolder:Scribe VS Code Extension}"
+                ],
+                "outFiles": [
+                    "${workspaceFolder:Scribe VS Code Extension}/out/**/*.js"
+                ],
+                "preLaunchTask": "npm: compile - sync/scribe-vscode"
+            },
+            {
+                "name": "Debug Server",
+                "type": "node",
+                "request": "launch",
+                "runtimeExecutable": "npm",
+                "runtimeArgs": ["run", "dev"],
+                "cwd": "${workspaceFolder:Scribe Server}",
+                "console": "integratedTerminal"
+            }
+        ],
+        "compounds": [
+            {
+                "name": "Full Stack",
+                "configurations": ["Debug Server", "Run Extension"],
+                "stopAll": true
+            }
+        ]
+    }
+}

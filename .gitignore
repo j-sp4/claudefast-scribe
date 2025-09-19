@@ -50,3 +50,7 @@ next-env.d.ts
 
 # workbench
 workbench/developer/CLAUDE.md
+
+
+sync/scribe-vscode/out/**
+sync/scribe-vscode/.next/**

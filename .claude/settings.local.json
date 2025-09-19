@@ -1,7 +1,25 @@
 {
   "permissions": {
     "allow": [
-      "WebSearch"
+      "WebSearch",
+      "Bash(npm run dev:*)",
+      "mcp__posthog__docs-search",
+      "WebFetch(domain:localhost)",
+      "Bash(npm install:*)",
+      "Bash(npx drizzle-kit:*)",
+      "Bash(curl:*)",
+      "Bash(npm run lint)",
+      "Bash(npx tsc:*)",
+      "Bash(npm run:*)",
+      "Bash(tsx scripts/check-db.ts:*)",
+      "Bash(npx tsx:*)",
+      "Bash(cat:*)",
+      "Bash(chmod:*)",
+      "Bash(lsof:*)",
+      "Bash(kill:*)",
+      "Bash(npm uninstall:*)",
+      "Bash(tree:*)",
+      "Bash(code --version)"
     ],
     "deny": [],
     "ask": []
